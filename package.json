@@ -1,0 +1,57 @@
+{
+  "name": "gmajna-music",
+  "productName": "Gmajna Music",
+  "version": "1.1.0",
+  "description": "Gmajna Music",
+  "author": "Gmajna",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cokolinohacker-byte/gmajna-music.git"
+  },
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis",
+    "dist:portable": "electron-builder --win portable",
+    "dist:unpacked": "electron-builder --win --dir",
+    "dist:release": "electron-builder --win nsis --publish always"
+  },
+  "build": {
+    "appId": "com.gmajna.music",
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/gmajna-logo.png",
+      "assets/gmajna-logo.ico",
+      "package.json"
+    ],
+    "win": {
+      "icon": "assets/gmajna-logo.ico",
+      "target": "nsis",
+      "artifactName": "Gmajna-Music-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "cokolinohacker-byte",
+      "repo": "gmajna-music",
+      "releaseType": "release"
+    }
+  },
+  "dependencies": {
+    "@ghostery/adblocker-electron": "*",
+    "electron-updater": "^6.6.2",
+    "socket.io": "^4.8.4",
+    "socket.io-client": "^4.8.4"
+  },
+  "devDependencies": {
+    "electron": "^44.7.0",
+    "electron-builder": "^26.15.3"
+  }
+}
