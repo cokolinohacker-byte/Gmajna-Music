@@ -201,6 +201,7 @@ class MainActivity : android.app.Activity() {
 
         webView = WebView(this).apply {
             setBackgroundColor(BACKGROUND)
+            setRendererPriorityPolicy(WebView.RENDERER_PRIORITY_BOUND, false)
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.databaseEnabled = true
@@ -657,6 +658,10 @@ class MainActivity : android.app.Activity() {
 
     private fun syncPlaybackControls(playing: Boolean, positionSeconds: Double, durationSeconds: Double) {
         if (currentId.isBlank()) return
+        webView.setRendererPriorityPolicy(
+            if (playing) WebView.RENDERER_PRIORITY_IMPORTANT else WebView.RENDERER_PRIORITY_BOUND,
+            false
+        )
         val positionMs = (positionSeconds * 1000).toLong().coerceAtLeast(0L)
         val durationMs = (durationSeconds * 1000).toLong().coerceAtLeast(0L)
         val state = listOf(
@@ -679,6 +684,16 @@ class MainActivity : android.app.Activity() {
             .putExtra("durationMs", durationMs)
             .putExtra("playing", playing)
         startForegroundService(serviceIntent)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::webView.isInitialized) {
+            webView.setRendererPriorityPolicy(
+                if (lastPlaying == true) WebView.RENDERER_PRIORITY_IMPORTANT else WebView.RENDERER_PRIORITY_BOUND,
+                false
+            )
+        }
     }
 
     private fun runMediaAction(action: String) {
