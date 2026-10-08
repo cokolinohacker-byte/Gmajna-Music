@@ -24,10 +24,11 @@ are included in that build. Android/APK changes remain separate in
 
 ## Windows installer and automatic updates
 
-The Windows installer is built with `npm run dist`. Users on older portable or
-unpacked builds must install this version once; those older builds cannot update
-themselves. Later installed versions check GitHub Releases, download updates in
-the background, and ask the user to restart to install them.
+The Windows installer is the `.exe` asset on the GitHub Releases page. Do not
+open the `.blockmap` or `latest.yml` assets; they are updater metadata. Users on
+older portable or unpacked builds must install this version once; those older
+builds cannot update themselves. Later installed versions check GitHub Releases,
+download updates in the background, and ask the user to restart to install them.
 
 The release workflow publishes to the public repository
 `cokolinohacker-byte/gmajna-music`. Create that repository and push this project,

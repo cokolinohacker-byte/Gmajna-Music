@@ -1,7 +1,7 @@
 {
   "name": "gmajna-music",
   "productName": "Gmajna Music",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Gmajna Music",
   "author": "Gmajna",
   "repository": {
@@ -15,7 +15,7 @@
     "dist": "electron-builder --win nsis",
     "dist:portable": "electron-builder --win portable",
     "dist:unpacked": "electron-builder --win --dir",
-    "dist:release": "electron-builder --win nsis --publish always"
+    "dist:release": "electron-builder --win nsis --publish never"
   },
   "build": {
     "appId": "com.gmajna.music",

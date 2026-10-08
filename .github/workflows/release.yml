@@ -19,5 +19,18 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run dist:release
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Gmajna Music ${{ github.ref_name }}
+          body: |
+            Download the `Gmajna-Music-Setup-*.exe` file to install Gmajna Music on Windows.
+            The `.blockmap` and `latest.yml` files are used by the automatic updater; they are not installers.
+          files: |
+            dist/Gmajna-Music-Setup-*.exe
+            dist/Gmajna-Music-Setup-*.exe.blockmap
+            dist/latest.yml
+          fail_on_unmatched_files: true
         env:
           GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
