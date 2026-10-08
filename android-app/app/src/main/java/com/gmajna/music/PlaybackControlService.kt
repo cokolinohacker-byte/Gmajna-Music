@@ -6,11 +6,18 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
 import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.media.MediaMetadata
 import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.util.Log
+import java.net.URL
+import java.util.concurrent.Executors
 
 class PlaybackControlService : Service() {
     companion object {
@@ -32,6 +39,13 @@ class PlaybackControlService : Service() {
     private var artist = ""
     private var videoId = ""
     private var playing = false
+    private var positionMs = 0L
+    private var durationMs = 0L
+    private var artUrl = ""
+    private var artwork: Bitmap? = null
+    private var lastWidgetState = ""
+    private val artworkExecutor = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate() {
         super.onCreate()
@@ -48,6 +62,7 @@ class PlaybackControlService : Service() {
             isActive = true
         }
         updateSession()
+        if (artUrl.isNotBlank()) loadArtwork(artUrl)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -56,7 +71,11 @@ class PlaybackControlService : Service() {
                 title = intent.getStringExtra("title").orEmpty()
                 artist = intent.getStringExtra("artist").orEmpty()
                 videoId = intent.getStringExtra("videoId").orEmpty()
+                positionMs = intent.getLongExtra("positionMs", 0L).coerceAtLeast(0L)
+                durationMs = intent.getLongExtra("durationMs", 0L).coerceAtLeast(0L)
                 playing = intent.getBooleanExtra("playing", false)
+                val nextArtUrl = intent.getStringExtra("artUrl").orEmpty()
+                if (nextArtUrl != artUrl) loadArtwork(nextArtUrl)
                 saveState()
                 updateSession()
             }
@@ -83,6 +102,14 @@ class PlaybackControlService : Service() {
                 .putString(MediaMetadata.METADATA_KEY_TITLE, title.ifBlank { "Gmajna Music" })
                 .putString(MediaMetadata.METADATA_KEY_ARTIST, artist)
                 .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, videoId)
+                .putLong(MediaMetadata.METADATA_KEY_DURATION, durationMs)
+                .apply {
+                    artwork?.let {
+                        putBitmap(MediaMetadata.METADATA_KEY_ART, it)
+                        putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, it)
+                        putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON, it)
+                    }
+                }
                 .build()
         )
         val actions = PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
@@ -93,12 +120,17 @@ class PlaybackControlService : Service() {
                 .setActions(actions)
                 .setState(
                     if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                    PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                    positionMs,
                     if (playing) 1f else 0f
                 )
                 .build()
         )
-        GmajnaWidgetProvider.updateAll(this, title, artist, playing)
+        val widgetState = listOf(title, artist, playing.toString(), artUrl, (artwork != null).toString())
+            .joinToString("\u0000")
+        if (widgetState != lastWidgetState) {
+            lastWidgetState = widgetState
+            GmajnaWidgetProvider.updateAll(this, title, artist, playing, artwork)
+        }
     }
 
     private fun buildNotification(): Notification {
@@ -115,6 +147,7 @@ class PlaybackControlService : Service() {
             .setSmallIcon(R.drawable.gmajna_logo)
             .setContentTitle(title.ifBlank { "Gmajna Music" })
             .setContentText(artist.ifBlank { "YouTube Music" })
+            .setLargeIcon(artwork)
             .setContentIntent(launchApp)
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOnlyAlertOnce(true)
@@ -163,6 +196,7 @@ class PlaybackControlService : Service() {
         artist = prefs.getString("artist", "").orEmpty()
         videoId = prefs.getString("videoId", "").orEmpty()
         playing = prefs.getBoolean("playing", false)
+        artUrl = prefs.getString("artUrl", "").orEmpty()
     }
 
     private fun saveState() {
@@ -170,8 +204,42 @@ class PlaybackControlService : Service() {
             .putString("title", title)
             .putString("artist", artist)
             .putString("videoId", videoId)
+            .putString("artUrl", artUrl)
             .putBoolean("playing", playing)
             .apply()
+    }
+
+    private fun loadArtwork(url: String) {
+        artUrl = url
+        artwork = null
+        if (url.isBlank()) {
+            updateSession()
+            return
+        }
+        if (!url.startsWith("https://")) {
+            Log.w("GmajnaMusic", "Ignoring non-HTTPS playback artwork URL: $url")
+            updateSession()
+            return
+        }
+        artworkExecutor.execute {
+            try {
+                val connection = URL(url).openConnection().apply {
+                    connectTimeout = 5000
+                    readTimeout = 5000
+                }
+                val bitmap = connection.getInputStream().use(BitmapFactory::decodeStream)
+                    ?: throw IllegalStateException("Artwork image could not be decoded")
+                mainHandler.post {
+                    if (artUrl != url) return@post
+                    artwork = bitmap
+                    updateSession()
+                    getSystemService(NotificationManager::class.java)
+                        .notify(NOTIFICATION_ID, buildNotification())
+                }
+            } catch (error: Exception) {
+                Log.w("GmajnaMusic", "Could not load playback artwork: $url", error)
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -179,10 +247,11 @@ class PlaybackControlService : Service() {
     override fun onDestroy() {
         playing = false
         saveState()
-        GmajnaWidgetProvider.updateAll(this, title, artist, playing)
+        GmajnaWidgetProvider.updateAll(this, title, artist, playing, artwork)
         mediaSession.isActive = false
         mediaSession.release()
         stopForeground(STOP_FOREGROUND_REMOVE)
+        artworkExecutor.shutdownNow()
         super.onDestroy()
     }
 }

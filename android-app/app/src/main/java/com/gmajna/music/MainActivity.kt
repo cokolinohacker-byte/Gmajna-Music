@@ -595,6 +595,7 @@ class MainActivity : android.app.Activity() {
                 artist:(d&&d.author)||'',
                 art:(d&&d.thumbnail_url)||'',
                 time:v?v.currentTime:0,
+                duration:v?v.duration:0,
                 playing:v?!v.paused:false
               });
             })()
@@ -636,7 +637,7 @@ class MainActivity : android.app.Activity() {
                     }
                 }
                 val playing = player.optBoolean("playing")
-                syncPlaybackControls(playing)
+                syncPlaybackControls(playing, player.optDouble("time"), player.optDouble("duration"))
                 if (lastPlaying != null && lastPlaying != playing && !remoteUpdate) {
                     emitSync(JSONObject()
                         .put("a", if (playing) "play" else "pause")
@@ -654,9 +655,18 @@ class MainActivity : android.app.Activity() {
         }
     }
 
-    private fun syncPlaybackControls(playing: Boolean) {
+    private fun syncPlaybackControls(playing: Boolean, positionSeconds: Double, durationSeconds: Double) {
         if (currentId.isBlank()) return
-        val state = listOf(currentId, currentTitle, currentArtist, playing.toString()).joinToString("\u0000")
+        val positionMs = (positionSeconds * 1000).toLong().coerceAtLeast(0L)
+        val durationMs = (durationSeconds * 1000).toLong().coerceAtLeast(0L)
+        val state = listOf(
+            currentId,
+            currentTitle,
+            currentArtist,
+            currentArt,
+            playing.toString(),
+            (positionMs / 5000).toString()
+        ).joinToString("\u0000")
         if (state == lastPlaybackServiceState) return
         lastPlaybackServiceState = state
         val serviceIntent = Intent(this, PlaybackControlService::class.java)
@@ -664,6 +674,9 @@ class MainActivity : android.app.Activity() {
             .putExtra("videoId", currentId)
             .putExtra("title", currentTitle)
             .putExtra("artist", currentArtist)
+            .putExtra("artUrl", currentArt)
+            .putExtra("positionMs", positionMs)
+            .putExtra("durationMs", durationMs)
             .putExtra("playing", playing)
         startForegroundService(serviceIntent)
     }
