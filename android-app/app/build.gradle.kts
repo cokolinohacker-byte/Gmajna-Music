@@ -6,6 +6,10 @@ plugins {
 android {
     namespace = "com.gmajna.music"
     compileSdk = 35
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
 
     defaultConfig {
         applicationId = "com.gmajna.music"
@@ -19,6 +23,10 @@ android {
         release {
             isMinifyEnabled = false
         }
+    }
+
+    kotlinOptions {
+        jvmTarget = "17"
     }
 }
 
