@@ -151,6 +151,7 @@ function handleMenuAction(action) {
 }
 
 ipcRenderer.on('app-menu-action', (_event, action) => handleMenuAction(action));
+ipcRenderer.on('gm-playback-action', (_event, action) => handlePlaybackAction(action));
 ipcRenderer.on('gm-window-state', (_event, state) => {
   if (!windowTitleBar) return;
   const isMaximized = state === 'maximized';
@@ -170,6 +171,10 @@ ipcRenderer.on('gm-fullscreen-state', (_event, isFullscreen) => {
 const TRACK_SYNC_TOLERANCE = 0.75;
 const PLAYER_POLL_MS = 500;
 const PRESENCE_INTERVAL_MS = 1000;
+const PLAYBACK_RATES = [0.75, 1, 1.25, 1.5, 2];
+let playbackRate = Number(store.get('playbackRate', '1'));
+if (!PLAYBACK_RATES.includes(playbackRate)) playbackRate = 1;
+let lastReportedPlaybackState = '';
 let playerPollPending = false;
 
 const urlId = () => new URLSearchParams(location.search).get('v');
@@ -231,6 +236,23 @@ function applyTrackInfo(info) {
     nowPlayingArt.src = currentTrackInfo.art;
   }
   updateShellPlayer();
+  reportPlaybackState();
+}
+
+function reportPlaybackState() {
+  const video = getVideo();
+  const id = currentTrackInfo.id;
+  if (!validId(id)) return;
+  const state = {
+    id,
+    title: currentTrackInfo.title,
+    artist: currentTrackInfo.artist,
+    playing: Boolean(video && !video.paused && !video.ended),
+  };
+  const key = JSON.stringify(state);
+  if (key === lastReportedPlaybackState) return;
+  lastReportedPlaybackState = key;
+  ipcRenderer.send('gm-playback-state', state);
 }
 
 function applyAlbumColor(image) {
@@ -780,6 +802,56 @@ function clickServiceControl(selector) {
   if (control) control.click();
 }
 
+function setPlaybackRate(rate) {
+  if (!PLAYBACK_RATES.includes(rate)) return;
+  playbackRate = rate;
+  store.set('playbackRate', String(rate));
+  const video = getVideo();
+  const player = document.querySelector('#movie_player');
+  if (player && typeof player.setPlaybackRate === 'function') player.setPlaybackRate(rate);
+  if (video && video.playbackRate !== rate) video.playbackRate = rate;
+  toast(`Hitrost predvajanja: ${rate}×`);
+}
+
+function handlePlaybackAction(action) {
+  const video = getVideo();
+  switch (action) {
+    case 'playback-previous':
+      clickServiceControl('#previous-button');
+      break;
+    case 'playback-toggle':
+      if (!video) {
+        toast('Predvajalnik trenutno ni na voljo');
+        return;
+      }
+      if (video.paused) {
+        video.play().catch((error) => console.error('Predvajanja ni mogoče začeti:', error));
+      } else video.pause();
+      break;
+    case 'playback-next':
+      clickServiceControl('#next-button');
+      break;
+    case 'playback-pip':
+      if (!video) {
+        toast('Video trenutno ni na voljo za sliko-v-sliki');
+        return;
+      }
+      (document.pictureInPictureElement
+        ? document.exitPictureInPicture()
+        : video.requestPictureInPicture()
+      ).catch((error) => {
+        console.error('Načina slika-v-sliki ni mogoče odpreti:', error);
+        toast('Slika-v-sliki trenutno ni na voljo');
+      });
+      break;
+    default: {
+      const match = /^playback-rate-(0\.75|1|1\.25|1\.5|2)$/.exec(action);
+      if (match) setPlaybackRate(Number(match[1]));
+      break;
+    }
+  }
+}
+
 function connectFromInvite(invite) {
   if (!invite || typeof invite.room !== 'string' || !/^[\w-]{1,100}$/.test(invite.room)) return;
   const server = typeof invite.server === 'string' ? invite.server : DEFAULT_SERVER;
@@ -895,6 +967,22 @@ function buildAppTitleBar() {
     {
       title: 'Options',
       items: [{ label: 'Appearance and themes', action: 'plugins' }],
+    },
+    {
+      title: 'Playback',
+      items: [
+        { label: 'Previous track', action: 'playback-previous' },
+        { label: 'Play / pause  (Ctrl+Shift+Space)', action: 'playback-toggle' },
+        { label: 'Next track', action: 'playback-next' },
+        { separator: true },
+        { label: 'Picture in picture  (Ctrl+Shift+P)', action: 'playback-pip' },
+        { separator: true },
+        { label: 'Speed: 0.75×', action: 'playback-rate-0.75' },
+        { label: 'Speed: 1×', action: 'playback-rate-1' },
+        { label: 'Speed: 1.25×', action: 'playback-rate-1.25' },
+        { label: 'Speed: 1.5×', action: 'playback-rate-1.5' },
+        { label: 'Speed: 2×', action: 'playback-rate-2' },
+      ],
     },
     {
       title: 'View',
@@ -1798,20 +1886,27 @@ function hookVideo() {
         !v.paused && !v.ended
       );
     };
+    const applySavedPlaybackRate = () => {
+      if (v.playbackRate !== playbackRate) v.playbackRate = playbackRate;
+    };
     updateProgressState();
     v.addEventListener('play', () => {
       updateProgressState();
+      applySavedPlaybackRate();
+      reportPlaybackState();
       pollPlayerId();
       setTimeout(() => send(msg('play')), 150);
     });
     v.addEventListener('playing', updateProgressState);
     v.addEventListener('pause', () => {
       updateProgressState();
+      reportPlaybackState();
       send(msg('pause'));
     });
     v.addEventListener('ended', updateProgressState);
     v.addEventListener('seeked', () => send(msg('seek')));
     v.addEventListener('loadedmetadata', pollPlayerId);
+    v.addEventListener('loadedmetadata', applySavedPlaybackRate);
   };
   setInterval(attachVideoEvents, PLAYER_POLL_MS);
   setInterval(pollPlayerId, PLAYER_POLL_MS);
@@ -2328,7 +2423,7 @@ function adSkipper() {
       }
     } else if (v) {
       if (v.muted && !remote) v.muted = false;
-      if (v.playbackRate !== 1) v.playbackRate = 1;
+      if (v.playbackRate !== playbackRate) v.playbackRate = playbackRate;
     }
 
     const skip = document.querySelector(

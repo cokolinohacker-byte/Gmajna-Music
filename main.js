@@ -1,4 +1,6 @@
-const { app, BrowserWindow, session, ipcMain, dialog } = require('electron');
+const {
+  app, BrowserWindow, session, ipcMain, dialog, Notification, globalShortcut,
+} = require('electron');
 const path = require('path');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { autoUpdater } = require('electron-updater');
@@ -8,6 +10,7 @@ app.setPath('userData', path.join(app.getPath('appData'), app.getName()));
 let mainWindow = null;
 let pendingInvite = null;
 let updatePromptOpen = false;
+let lastPlaybackVideoId = '';
 const inviteServer = 'https://gmajna-server.onrender.com';
 
 function parseInvite(rawUrl) {
@@ -117,6 +120,43 @@ ipcMain.on('gm-window-control', (_event, action) => {
   } else if (action === 'close') mainWindow.close();
 });
 
+function sendPlaybackAction(action) {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('gm-playback-action', action);
+}
+
+ipcMain.on('gm-playback-state', (event, state) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+  if (!state || typeof state !== 'object'
+      || typeof state.id !== 'string' || !/^[\w-]{11}$/.test(state.id)
+      || typeof state.title !== 'string' || typeof state.artist !== 'string'
+      || typeof state.playing !== 'boolean') return;
+  if (lastPlaybackVideoId && state.id !== lastPlaybackVideoId
+      && (!mainWindow.isFocused() || mainWindow.isMinimized())
+      && Notification.isSupported()) {
+    new Notification({
+      title: state.title.slice(0, 200),
+      body: state.artist.slice(0, 200),
+      icon: path.join(__dirname, 'assets', 'gmajna-logo.png'),
+      silent: true,
+    }).show();
+  }
+  lastPlaybackVideoId = state.id;
+});
+
+function registerPlaybackShortcuts() {
+  const shortcuts = {
+    MediaPlayPause: 'playback-toggle',
+    MediaNextTrack: 'playback-next',
+    MediaPreviousTrack: 'playback-previous',
+  };
+  for (const [accelerator, action] of Object.entries(shortcuts)) {
+    if (!globalShortcut.register(accelerator, () => sendPlaybackAction(action))) {
+      console.warn(`Globalne medijske bližnjice ni mogoče registrirati: ${accelerator}`);
+    }
+  }
+}
+
 ipcMain.on('gm-menu-action', (event, action) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
   const contents = mainWindow.webContents;
@@ -124,6 +164,19 @@ ipcMain.on('gm-menu-action', (event, action) => {
     case 'plugins':
     case 'jam':
       contents.send('app-menu-action', action);
+      break;
+    case 'playback-previous':
+    case 'playback-toggle':
+    case 'playback-next':
+    case 'playback-pip':
+      sendPlaybackAction(action);
+      break;
+    case 'playback-rate-0.75':
+    case 'playback-rate-1':
+    case 'playback-rate-1.25':
+    case 'playback-rate-1.5':
+    case 'playback-rate-2':
+      sendPlaybackAction(action);
       break;
     case 'reload':
       contents.reload();
@@ -161,6 +214,7 @@ ipcMain.on('gm-menu-action', (event, action) => {
 });
 
 app.whenReady().then(async () => {
+  registerPlaybackShortcuts();
   if (!app.setAsDefaultProtocolClient('gmajna')) {
     console.warn('Povezav gmajna:// ni bilo mogoče registrirati kot privzeti protokol.');
   }
@@ -181,6 +235,21 @@ app.whenReady().then(async () => {
   mainWindow.webContents.on('page-title-updated', (event) => {
     event.preventDefault();
     mainWindow.setTitle('Gmajna Music');
+  });
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    if (!input.control || !input.shift) return;
+    const shortcuts = {
+      Space: 'playback-toggle',
+      ArrowLeft: 'playback-previous',
+      ArrowRight: 'playback-next',
+      KeyP: 'playback-pip',
+    };
+    const action = shortcuts[input.code];
+    if (action) {
+      event.preventDefault();
+      sendPlaybackAction(action);
+    }
   });
   mainWindow.webContents.on('will-prevent-unload', (event) => {
     event.preventDefault();
@@ -205,3 +274,4 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => app.quit());
+app.on('will-quit', () => globalShortcut.unregisterAll());

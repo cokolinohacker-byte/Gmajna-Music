@@ -18,6 +18,11 @@ Custom backgrounds are resized and stored locally on the device. The Gmajna
 Music text appears centered in the top bar and changes color with the selected
 theme. It is hidden while the app is in fullscreen mode.
 The Jam control is available at the bottom left and from the `Plugins` menu.
+The `Playback` menu provides previous, play/pause, next, picture-in-picture,
+and playback-speed controls. Media keys work while Gmajna Music is running;
+`Ctrl+Shift+Space`, `Ctrl+Shift+Left/Right`, and `Ctrl+Shift+P` control
+playback and picture-in-picture. Windows notifications announce track changes
+while the app is in the background.
 
 Run `npm run start:unpacked` to rebuild and launch the desktop app in
 `dist/win-unpacked`. Desktop edits in `main.js`, `preload.js`, and `assets`
