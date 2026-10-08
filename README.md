@@ -23,6 +23,8 @@ and playback-speed controls. Media keys work while Gmajna Music is running;
 `Ctrl+Shift+Space`, `Ctrl+Shift+Left/Right`, and `Ctrl+Shift+P` control
 playback and picture-in-picture. Windows notifications announce track changes
 while the app is in the background.
+When the Discord desktop client is running, Discord Rich Presence shows the
+current track and artist and clears when Gmajna Music exits.
 
 Run `npm run start:unpacked` to rebuild and launch the desktop app in
 `dist/win-unpacked`. Desktop edits in `main.js`, `preload.js`, and `assets`

@@ -247,9 +247,12 @@ function reportPlaybackState() {
     id,
     title: currentTrackInfo.title,
     artist: currentTrackInfo.artist,
+    art: currentTrackInfo.art || '',
     playing: Boolean(video && !video.paused && !video.ended),
+    time: video && Number.isFinite(video.currentTime) ? video.currentTime : 0,
+    duration: video && Number.isFinite(video.duration) ? video.duration : 0,
   };
-  const key = JSON.stringify(state);
+  const key = JSON.stringify([state.id, state.title, state.artist, state.art, state.playing]);
   if (key === lastReportedPlaybackState) return;
   lastReportedPlaybackState = key;
   ipcRenderer.send('gm-playback-state', state);

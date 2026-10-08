@@ -1,16 +1,25 @@
 const {
-  app, BrowserWindow, session, ipcMain, dialog, Notification, globalShortcut,
+  app, BrowserWindow, session, ipcMain, dialog, Notification, globalShortcut, net, nativeImage,
 } = require('electron');
 const path = require('path');
+const DiscordRPC = require('discord-rpc');
 const { ElectronBlocker } = require('@ghostery/adblocker-electron');
 const { autoUpdater } = require('electron-updater');
 
 app.setPath('userData', path.join(app.getPath('appData'), app.getName()));
 
+const DISCORD_CLIENT_ID = '1557801639119954030';
 let mainWindow = null;
 let pendingInvite = null;
 let updatePromptOpen = false;
 let lastPlaybackVideoId = '';
+let discordRpcClient = null;
+let discordRpcReady = false;
+let discordRpcRetryTimer = null;
+let discordRpcRetryDelay = 5000;
+let isQuitting = false;
+let latestPlaybackState = null;
+let lastDiscordActivityKey = '';
 const inviteServer = 'https://gmajna-server.onrender.com';
 
 function parseInvite(rawUrl) {
@@ -125,21 +134,131 @@ function sendPlaybackAction(action) {
   mainWindow.webContents.send('gm-playback-action', action);
 }
 
+function publishDiscordActivity() {
+  if (!discordRpcReady || !discordRpcClient || !latestPlaybackState) return;
+  const { id, title, artist, playing, time, duration } = latestPlaybackState;
+  const key = JSON.stringify([id, title, artist, playing]);
+  if (key === lastDiscordActivityKey) return;
+  lastDiscordActivityKey = key;
+  const now = Date.now();
+  const startTimestamp = playing ? now - Math.max(0, time) * 1000 : undefined;
+  const endTimestamp = playing && duration > time ? now + (duration - time) * 1000 : undefined;
+  const timestamps = startTimestamp
+    ? { start: Math.round(startTimestamp), ...(endTimestamp ? { end: Math.round(endTimestamp) } : {}) }
+    : undefined;
+  // discord-rpc ne podpira polja "type", zato pošljemo zahtevo neposredno (2 = Listening)
+  discordRpcClient.request('SET_ACTIVITY', {
+    pid: process.pid,
+    activity: {
+      type: 2,
+      details: (playing ? title : `Paused · ${title}`).slice(0, 128),
+      state: artist.slice(0, 128),
+      timestamps,
+      instance: false,
+    },
+  }).catch((error) => {
+    console.error('Discord Rich Presence ni bilo mogoče posodobiti:', error);
+  });
+}
+
+function scheduleDiscordRpcRetry() {
+  if (discordRpcRetryTimer || isQuitting) return;
+  const delay = discordRpcRetryDelay;
+  discordRpcRetryDelay = Math.min(discordRpcRetryDelay * 2, 60000);
+  discordRpcRetryTimer = setTimeout(() => {
+    discordRpcRetryTimer = null;
+    connectDiscordRpc();
+  }, delay);
+  discordRpcRetryTimer.unref();
+}
+
+function connectDiscordRpc() {
+  if (discordRpcClient || isQuitting) return;
+  const client = new DiscordRPC.Client({ transport: 'ipc' });
+  discordRpcClient = client;
+  client.once('ready', () => {
+    if (discordRpcClient !== client) return;
+    discordRpcReady = true;
+    discordRpcRetryDelay = 5000;
+    lastDiscordActivityKey = '';
+    publishDiscordActivity();
+    console.info('Discord Rich Presence is connected.');
+  });
+  client.on('disconnected', () => {
+    if (discordRpcClient !== client) return;
+    discordRpcClient = null;
+    discordRpcReady = false;
+    lastDiscordActivityKey = '';
+    scheduleDiscordRpcRetry();
+  });
+  client.on('error', (error) => {
+    console.warn('Discord Rich Presence connection error:', error.message);
+  });
+  client.login({ clientId: DISCORD_CLIENT_ID }).catch((error) => {
+    if (discordRpcClient !== client) return;
+    console.info(`Discord Rich Presence is unavailable: ${error.message}`);
+    discordRpcClient = null;
+    discordRpcReady = false;
+    client.destroy().catch((destroyError) => {
+      console.warn('Discord Rich Presence connection cleanup failed:', destroyError.message);
+    });
+    scheduleDiscordRpcRetry();
+  });
+}
+
+function artworkUrl(value, id) {
+  try {
+    const url = new URL(value);
+    if (url.protocol === 'https:'
+        && /(^|\.)(ytimg\.com|ggpht\.com|googleusercontent\.com)$/.test(url.hostname)) return url.href;
+  } catch (error) {}
+  return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+}
+
+async function showTrackNotification(title, artist, art, id) {
+  let icon = path.join(__dirname, 'assets', 'gmajna-logo.png');
+  try {
+    const response = await net.fetch(artworkUrl(art, id));
+    if (response.ok) {
+      const image = nativeImage.createFromBuffer(Buffer.from(await response.arrayBuffer()));
+      if (!image.isEmpty()) {
+        const { width, height } = image.getSize();
+        const side = Math.min(width, height);
+        icon = image.crop({
+          x: Math.floor((width - side) / 2),
+          y: Math.floor((height - side) / 2),
+          width: side,
+          height: side,
+        }).resize({ width: 256, height: 256 });
+      }
+    }
+  } catch (error) {
+    console.warn('Naslovnice za obvestilo ni mogoče naložiti:', error.message);
+  }
+  new Notification({ title, body: artist, icon, silent: true }).show();
+}
+
 ipcMain.on('gm-playback-state', (event, state) => {
   if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
   if (!state || typeof state !== 'object'
       || typeof state.id !== 'string' || !/^[\w-]{11}$/.test(state.id)
       || typeof state.title !== 'string' || typeof state.artist !== 'string'
-      || typeof state.playing !== 'boolean') return;
+      || typeof state.playing !== 'boolean'
+      || !Number.isFinite(state.time) || !Number.isFinite(state.duration)) return;
+  latestPlaybackState = {
+    id: state.id,
+    title: state.title.slice(0, 200),
+    artist: state.artist.slice(0, 200),
+    art: typeof state.art === 'string' ? state.art.slice(0, 512) : '',
+    playing: state.playing,
+    time: Math.max(0, state.time),
+    duration: Math.max(0, state.duration),
+  };
+  publishDiscordActivity();
   if (lastPlaybackVideoId && state.id !== lastPlaybackVideoId
       && (!mainWindow.isFocused() || mainWindow.isMinimized())
       && Notification.isSupported()) {
-    new Notification({
-      title: state.title.slice(0, 200),
-      body: state.artist.slice(0, 200),
-      icon: path.join(__dirname, 'assets', 'gmajna-logo.png'),
-      silent: true,
-    }).show();
+    showTrackNotification(state.title.slice(0, 200), state.artist.slice(0, 200), state.art, state.id);
   }
   lastPlaybackVideoId = state.id;
 });
@@ -215,6 +334,7 @@ ipcMain.on('gm-menu-action', (event, action) => {
 
 app.whenReady().then(async () => {
   registerPlaybackShortcuts();
+  connectDiscordRpc();
   if (!app.setAsDefaultProtocolClient('gmajna')) {
     console.warn('Povezav gmajna:// ni bilo mogoče registrirati kot privzeti protokol.');
   }
@@ -274,4 +394,11 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => globalShortcut.unregisterAll());
+app.on('will-quit', () => {
+  isQuitting = true;
+  clearTimeout(discordRpcRetryTimer);
+  globalShortcut.unregisterAll();
+  if (discordRpcClient) discordRpcClient.destroy().catch((error) => {
+    console.warn('Discord Rich Presence could not be closed cleanly:', error.message);
+  });
+});
