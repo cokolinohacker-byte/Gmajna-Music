@@ -1,5 +1,27 @@
 # Gmajna Music
 
+## Desktop menus and plugins
+
+The desktop app uses YouTube Music's native interface with Gmajna branding,
+Jam, and built-in visual extensions. Search and playback use YouTube Music,
+so an internet connection and YouTube Music availability are still required.
+The custom home, search, library, and playback-bar interface can be enabled
+with `GMAJNA_CUSTOM_UI=1`; it is disabled by default. The custom title bar has
+`Plugins`, `Options`, `View`, `Navigation`, and `About`, plus window controls.
+Open
+`Plugins > Manage Plugins` to enable or disable the built-in visual extensions,
+including a subtle moving highlight on the active progress line while music is
+playing, or choose `Options > Appearance and themes` to change the saved color
+theme. The Gmajna logo and name appear at the upper left below the app menu
+and change with the selected theme: gold, blue, or purple. They are hidden
+while the app is in fullscreen mode.
+The Jam control is available at the bottom left and from the `Plugins` menu.
+
+Run `npm run start:unpacked` to rebuild and launch the desktop app in
+`dist/win-unpacked`. Desktop edits in `main.js`, `preload.js`, and `assets`
+are included in that build. Android/APK changes remain separate in
+`android-app`.
+
 ## Windows installer and automatic updates
 
 The Windows installer is built with `npm run dist`. Users on older portable or

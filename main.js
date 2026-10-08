@@ -108,6 +108,58 @@ function configureAutoUpdates() {
   updateCheckTimer.unref();
 }
 
+ipcMain.on('gm-window-control', (_event, action) => {
+  if (!mainWindow || mainWindow.isDestroyed() || _event.sender !== mainWindow.webContents) return;
+  if (action === 'minimize') mainWindow.minimize();
+  else if (action === 'toggle-maximize') {
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+  } else if (action === 'close') mainWindow.close();
+});
+
+ipcMain.on('gm-menu-action', (event, action) => {
+  if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) return;
+  const contents = mainWindow.webContents;
+  switch (action) {
+    case 'plugins':
+    case 'jam':
+      contents.send('app-menu-action', action);
+      break;
+    case 'reload':
+      contents.reload();
+      break;
+    case 'fullscreen':
+      mainWindow.setFullScreen(!mainWindow.isFullScreen());
+      break;
+    case 'zoom-in':
+      contents.setZoomLevel(contents.getZoomLevel() + 0.5);
+      break;
+    case 'zoom-out':
+      contents.setZoomLevel(contents.getZoomLevel() - 0.5);
+      break;
+    case 'zoom-reset':
+      contents.setZoomLevel(0);
+      break;
+    case 'back':
+      if (contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
+      break;
+    case 'forward':
+      if (contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
+      break;
+    case 'about':
+      dialog.showMessageBox(mainWindow, {
+        type: 'info',
+        title: 'About Gmajna Music',
+        message: 'Gmajna Music',
+        detail: `Version ${app.getVersion()}\nMusic together with Gmajna Jam.`,
+        buttons: ['OK'],
+      }).catch((error) => console.error('Obvestila o aplikaciji ni mogoče prikazati:', error));
+      break;
+    default:
+      console.warn('Neznano dejanje menija namizne aplikacije:', action);
+  }
+});
+
 app.whenReady().then(async () => {
   if (!app.setAsDefaultProtocolClient('gmajna')) {
     console.warn('Povezav gmajna:// ni bilo mogoče registrirati kot privzeti protokol.');
@@ -116,7 +168,7 @@ app.whenReady().then(async () => {
   if (startupInvite) pendingInvite = parseInvite(startupInvite);
 
   mainWindow = new BrowserWindow({
-    width: 1280, height: 800, autoHideMenuBar: true, backgroundColor: '#0d0d12',
+    width: 1280, height: 800, frame: false, backgroundColor: '#0d0d12',
     icon: path.join(__dirname, 'assets', 'gmajna-logo.ico'),
     title: 'Gmajna Music',
     webPreferences: {
@@ -136,6 +188,11 @@ app.whenReady().then(async () => {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  mainWindow.on('maximize', () => mainWindow?.webContents.send('gm-window-state', 'maximized'));
+  mainWindow.on('unmaximize', () => mainWindow?.webContents.send('gm-window-state', 'restored'));
+  mainWindow.on('enter-full-screen', () => mainWindow?.webContents.send('gm-fullscreen-state', true));
+  mainWindow.on('leave-full-screen', () => mainWindow?.webContents.send('gm-fullscreen-state', false));
 
   const blockerReady = ElectronBlocker.fromPrebuiltAdsAndTracking(fetch)
     .then((blocker) => blocker.enableBlockingInSession(session.defaultSession))

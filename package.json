@@ -1,7 +1,7 @@
 {
   "name": "gmajna-music",
   "productName": "Gmajna Music",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Gmajna Music",
   "author": "Gmajna",
   "repository": {
@@ -11,6 +11,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
+    "start:unpacked": "npm run dist:unpacked && start \"\" \"dist\\win-unpacked\\Gmajna Music.exe\"",
     "dist": "electron-builder --win nsis",
     "dist:portable": "electron-builder --win portable",
     "dist:unpacked": "electron-builder --win --dir",
@@ -22,6 +23,9 @@
       "main.js",
       "preload.js",
       "assets/gmajna-logo.png",
+      "assets/gmajna-logo-gold.png",
+      "assets/gmajna-logo-blue.png",
+      "assets/gmajna-logo-purple.png",
       "assets/gmajna-logo.ico",
       "package.json"
     ],
