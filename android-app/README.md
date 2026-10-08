@@ -2,7 +2,10 @@
 
 This is a standalone Android project. It keeps YouTube Music in a WebView and
 adds Gmajna branding and Jam room controls backed by the existing Socket.IO
-server.
+server. Playback exposes Android media controls in the notification and
+lock-screen; add the Gmajna Music widget to the home screen for play/pause and
+track skipping without reopening the app. Background playback remains subject
+to WebView, Android battery-management, and YouTube Music restrictions.
 
 The ad filter blocks known third-party ad hosts and attempts to skip visible
 player ads. YouTube may serve ad media from the same hosts as music, so this

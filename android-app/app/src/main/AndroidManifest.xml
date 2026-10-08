@@ -1,6 +1,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="false"
@@ -28,5 +31,29 @@
                 <data android:scheme="gmajna" android:host="join" />
             </intent-filter>
         </activity>
+        <service
+            android:name=".PlaybackControlService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <receiver
+            android:name=".GmajnaWidgetProvider"
+            android:exported="true"
+            android:label="Gmajna Music">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/gmajna_music_widget_info" />
+        </receiver>
+        <receiver
+            android:name=".WidgetControlReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.gmajna.music.widget.PLAY_PAUSE" />
+                <action android:name="com.gmajna.music.widget.PREVIOUS" />
+                <action android:name="com.gmajna.music.widget.NEXT" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

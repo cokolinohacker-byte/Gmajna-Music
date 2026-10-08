@@ -1,15 +1,20 @@
 package com.gmajna.music
 
 import android.annotation.SuppressLint
+import android.Manifest
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -72,8 +77,21 @@ class MainActivity : android.app.Activity() {
     private var currentArtist = ""
     private var currentArt = ""
     private var lastPlaying: Boolean? = null
+    private var lastPlaybackServiceState = ""
+    private var pendingMediaAction = ""
     private var shouldPlay = false
     private val peers = linkedMapOf<String, String>()
+    private val mediaControlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            val action = intent.getStringExtra(PlaybackControlService.EXTRA_CONTROL).orEmpty()
+            if (action.isNotBlank()) {
+                getSharedPreferences("playback_widget", Context.MODE_PRIVATE).edit()
+                    .remove("pendingControl")
+                    .apply()
+                pendingMediaAction = action
+            }
+        }
+    }
 
     private val playerPoll = object : Runnable {
         override fun run() {
@@ -96,6 +114,18 @@ class MainActivity : android.app.Activity() {
         peerId = getPreferences(Context.MODE_PRIVATE).getString("peerId", null) ?: UUID.randomUUID().toString().also {
             getPreferences(Context.MODE_PRIVATE).edit().putString("peerId", it).apply()
         }
+        val filter = IntentFilter(PlaybackControlService.ACTION_CONTROL)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(mediaControlReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(mediaControlReceiver, filter)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1001)
+        }
         buildScreen()
         openInvite(intent?.data)
     }
@@ -105,6 +135,24 @@ class MainActivity : android.app.Activity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(BACKGROUND)
+            setOnApplyWindowInsetsListener { view, insets ->
+                var top = 0
+                var bottom = 0
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val systemBars = insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                    top = systemBars.top
+                    bottom = systemBars.bottom
+                } else {
+                    @Suppress("DEPRECATION")
+                    val topInset = insets.systemWindowInsetTop
+                    @Suppress("DEPRECATION")
+                    val bottomInset = insets.systemWindowInsetBottom
+                    top = topInset
+                    bottom = bottomInset
+                }
+                view.setPadding(view.paddingLeft, top, view.paddingRight, bottom)
+                insets
+            }
         }
 
         val toolbar = LinearLayout(this).apply {
@@ -199,6 +247,7 @@ class MainActivity : android.app.Activity() {
             1f
         ))
         setContentView(root)
+        root.requestApplyInsets()
         handler.post(playerPoll)
     }
 
@@ -222,8 +271,33 @@ class MainActivity : android.app.Activity() {
         webView.evaluateJavascript(
             """
             (function(){
-              if(window.__gmajnaAdCheck)return;
-              window.__gmajnaAdCheck=setInterval(function(){
+              function applyBrandingStyle(root){
+                try{
+                  if(!root||root.querySelector('#gmajna-android-branding'))return;
+                  var style=document.createElement('style');
+                  style.id='gmajna-android-branding';
+                  style.textContent='ytmusic-logo,.ytmusic-logo,#logo.ytmusic-logo{display:none!important}';
+                  root.appendChild(style);
+                }catch(e){}
+              }
+              function scanShadowRoots(){
+                try{
+                  var roots=[document],seen=new Set();
+                  while(roots.length){
+                    var root=roots.pop();
+                    if(!root||seen.has(root))continue;
+                    seen.add(root);
+                    applyBrandingStyle(root);
+                    root.querySelectorAll('*').forEach(function(node){
+                      if(node.shadowRoot)roots.push(node.shadowRoot);
+                    });
+                  }
+                }catch(e){}
+              }
+              scanShadowRoots();
+              if(!window.__gmajnaBrandingCheck)
+                window.__gmajnaBrandingCheck=setInterval(scanShadowRoots,2000);
+              if(!window.__gmajnaAdCheck)window.__gmajnaAdCheck=setInterval(function(){
                 try{
                   var player=document.querySelector('#movie_player,.html5-video-player');
                   var video=document.querySelector('video');
@@ -235,7 +309,7 @@ class MainActivity : android.app.Activity() {
                   if(video&&isFinite(video.duration)&&video.duration>0&&video.duration<180)
                     video.currentTime=video.duration;
                 }catch(e){}
-              },300);
+              },500);
             })();
             """.trimIndent(),
             null
@@ -537,6 +611,21 @@ class MainActivity : android.app.Activity() {
                     currentArtist = player.optString("artist")
                     currentArt = player.optString("art")
                     songLine.text = listOf(currentTitle, currentArtist).filter { it.isNotBlank() }.joinToString(" · ")
+                    if (pendingMediaAction.isNotBlank()) {
+                        val action = pendingMediaAction
+                        pendingMediaAction = ""
+                        runMediaAction(action)
+                    } else {
+                        val savedAction = getSharedPreferences("playback_widget", Context.MODE_PRIVATE)
+                            .getString("pendingControl", "")
+                            .orEmpty()
+                        if (savedAction.isNotBlank()) {
+                            getSharedPreferences("playback_widget", Context.MODE_PRIVATE).edit()
+                                .remove("pendingControl")
+                                .apply()
+                            runMediaAction(savedAction)
+                        }
+                    }
                     if (changedTrack && !remoteUpdate) {
                         emitSync(JSONObject()
                             .put("a", "track")
@@ -547,6 +636,7 @@ class MainActivity : android.app.Activity() {
                     }
                 }
                 val playing = player.optBoolean("playing")
+                syncPlaybackControls(playing)
                 if (lastPlaying != null && lastPlaying != playing && !remoteUpdate) {
                     emitSync(JSONObject()
                         .put("a", if (playing) "play" else "pause")
@@ -562,6 +652,63 @@ class MainActivity : android.app.Activity() {
                 android.util.Log.w("GmajnaMusic", "Player state read failed", error)
             }
         }
+    }
+
+    private fun syncPlaybackControls(playing: Boolean) {
+        if (currentId.isBlank()) return
+        val state = listOf(currentId, currentTitle, currentArtist, playing.toString()).joinToString("\u0000")
+        if (state == lastPlaybackServiceState) return
+        lastPlaybackServiceState = state
+        val serviceIntent = Intent(this, PlaybackControlService::class.java)
+            .setAction(PlaybackControlService.ACTION_UPDATE)
+            .putExtra("videoId", currentId)
+            .putExtra("title", currentTitle)
+            .putExtra("artist", currentArtist)
+            .putExtra("playing", playing)
+        startForegroundService(serviceIntent)
+    }
+
+    private fun runMediaAction(action: String) {
+        if (!::webView.isInitialized || webView.url.isNullOrBlank()) {
+            pendingMediaAction = action
+            return
+        }
+        val script = when (action) {
+            PlaybackControlService.ACTION_PLAY -> """
+                (function(){var v=document.querySelector('video');if(v&&v.paused)v.play().catch(function(){});})()
+            """.trimIndent()
+            PlaybackControlService.ACTION_PAUSE -> """
+                (function(){var v=document.querySelector('video');if(v&&!v.paused)v.pause();})()
+            """.trimIndent()
+            PlaybackControlService.ACTION_NEXT -> """
+                (function(){
+                  var p=document.getElementById('movie_player');
+                  if(p&&typeof p.nextVideo==='function'){p.nextVideo();return;}
+                  var roots=[document],b=null;
+                  while(roots.length&&!b){
+                    var root=roots.pop();
+                    b=root.querySelector('#next-button button,#next-button');
+                    if(!b)root.querySelectorAll('*').forEach(function(n){if(n.shadowRoot)roots.push(n.shadowRoot);});
+                  }
+                  if(b)b.click();
+                })()
+            """.trimIndent()
+            PlaybackControlService.ACTION_PREVIOUS -> """
+                (function(){
+                  var p=document.getElementById('movie_player');
+                  if(p&&typeof p.previousVideo==='function'){p.previousVideo();return;}
+                  var roots=[document],b=null;
+                  while(roots.length&&!b){
+                    var root=roots.pop();
+                    b=root.querySelector('#previous-button button,#previous-button');
+                    if(!b)root.querySelectorAll('*').forEach(function(n){if(n.shadowRoot)roots.push(n.shadowRoot);});
+                  }
+                  if(b)b.click();
+                })()
+            """.trimIndent()
+            else -> return
+        }
+        webView.evaluateJavascript(script, null)
     }
 
     private fun emitPresence() {
@@ -687,6 +834,8 @@ class MainActivity : android.app.Activity() {
     override fun onDestroy() {
         handler.removeCallbacks(playerPoll)
         handler.removeCallbacks(presencePoll)
+        unregisterReceiver(mediaControlReceiver)
+        if (isFinishing) stopService(Intent(this, PlaybackControlService::class.java))
         leaveJam(notifyHost = false)
         if (::webView.isInitialized) {
             webView.stopLoading()

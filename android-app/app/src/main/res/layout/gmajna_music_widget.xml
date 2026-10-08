@@ -1,0 +1,76 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="#F21A1712"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:padding="12dp">
+
+    <ImageView
+        android:id="@+id/widget_open"
+        android:layout_width="42dp"
+        android:layout_height="42dp"
+        android:contentDescription="Odpri Gmajna Music"
+        android:scaleType="centerCrop"
+        android:src="@drawable/gmajna_logo" />
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/widget_title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Gmajna Music"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_artist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="Odpri aplikacijo za predvajanje"
+            android:textColor="#C9C5BD"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/widget_previous"
+        android:layout_width="44dp"
+        android:layout_height="48dp"
+        android:gravity="center"
+        android:text="⏮"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp"
+        android:contentDescription="Prejšnja skladba" />
+
+    <TextView
+        android:id="@+id/widget_play_pause"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:gravity="center"
+        android:text="▶"
+        android:textColor="#F5A900"
+        android:textSize="24sp"
+        android:contentDescription="Predvajaj ali ustavi" />
+
+    <TextView
+        android:id="@+id/widget_next"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:gravity="center"
+        android:text="⏭"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp"
+        android:contentDescription="Naslednja skladba" />
+</LinearLayout>
