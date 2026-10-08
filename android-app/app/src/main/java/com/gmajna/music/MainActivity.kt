@@ -193,7 +193,11 @@ class MainActivity : android.app.Activity() {
             }
             loadUrl("https://music.youtube.com")
         }
-        root.addView(webView, LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f)
+        root.addView(webView, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        ))
         setContentView(root)
         handler.post(playerPoll)
     }
