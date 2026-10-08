@@ -28,26 +28,22 @@ const PLUGINS = [
 let themeId = store.get('theme', 'gmajna');
 if (!Object.hasOwn(THEMES, themeId)) themeId = 'gmajna';
 let THEME = THEMES[themeId];
-function loadThemeLogo(selectedTheme) {
-  const logoNames = {
-    gmajna: 'gmajna-logo-gold.png',
-    ocean: 'gmajna-logo-blue.png',
-    violet: 'gmajna-logo-purple.png',
-  };
-  const logoPath = path.join(__dirname, 'assets', logoNames[selectedTheme]);
+const BACKGROUND_MODES = ['ambient', 'image', 'default'];
+let backgroundMode = store.get('backgroundMode', 'ambient');
+if (!BACKGROUND_MODES.includes(backgroundMode)) backgroundMode = 'ambient';
+let backgroundImage = store.get('backgroundImage', '');
+if (!/^data:image\/jpeg;base64,[\w+/]+=*$/.test(backgroundImage)) backgroundImage = '';
+if (backgroundMode === 'image' && !backgroundImage) backgroundMode = 'ambient';
+function loadThemeLogo() {
+  const logoPath = path.join(__dirname, 'assets', 'gmajna-logo.png');
   try {
     return `data:image/png;base64,${fs.readFileSync(logoPath).toString('base64')}`;
   } catch (error) {
-    console.error(`Logotipa za temo ${selectedTheme} ni mogoče naložiti:`, error);
-    try {
-      return `data:image/png;base64,${fs.readFileSync(path.join(__dirname, 'assets', 'gmajna-logo.png')).toString('base64')}`;
-    } catch (fallbackError) {
-      console.error('Privzetega logotipa Gmajna Music ni mogoče naložiti:', fallbackError);
-      return '';
-    }
+    console.error('Logotipa Gmajna Music ni mogoče naložiti:', error);
+    return '';
   }
 }
-let logoDataUrl = loadThemeLogo(themeId);
+let logoDataUrl = loadThemeLogo();
 
 let socket = null;
 let remote = false;
@@ -90,6 +86,8 @@ let jamPanel = null;
 let jamTrigger = null;
 let pendingMenuAction = '';
 let appTitleBar = null;
+let windowTitleBar = null;
+let youtubeProfileButton = null;
 let musicShell = null;
 let shellContent = null;
 let shellSearch = null;
@@ -108,13 +106,24 @@ function pluginEnabled(id) {
 
 function applyPluginSettings() {
   if (!document.body) return;
-  document.body.classList.toggle('gm-ambient-background', pluginEnabled('ambient-background'));
+  document.documentElement.style.setProperty(
+    '--gm-custom-background-image',
+    backgroundImage ? `url("${backgroundImage}")` : 'none'
+  );
+  document.body.classList.toggle(
+    'gm-ambient-background',
+    backgroundMode === 'ambient' && pluginEnabled('ambient-background')
+  );
+  document.body.classList.toggle(
+    'gm-custom-background',
+    backgroundMode === 'image' && Boolean(backgroundImage)
+  );
   document.body.classList.toggle('gm-hide-promotions', pluginEnabled('hide-promotions'));
   const root = document.documentElement;
   const albumThemeEnabled = pluginEnabled('album-color-theme');
   const progressEnabled = pluginEnabled('animated-progress');
   root.classList.toggle('gm-album-theme-enabled', albumThemeEnabled);
-  if (!albumThemeEnabled) root.style.removeProperty('--gm-album-color');
+  if (!albumThemeEnabled && backgroundMode !== 'ambient') root.style.removeProperty('--gm-album-color');
   root.style.setProperty('--gm-progress-animation',
     progressEnabled ? 'gm-progress-shimmer 3.6s ease-in-out infinite' : 'none');
   root.style.setProperty('--gm-progress-wave-opacity',
@@ -143,10 +152,10 @@ function handleMenuAction(action) {
 
 ipcRenderer.on('app-menu-action', (_event, action) => handleMenuAction(action));
 ipcRenderer.on('gm-window-state', (_event, state) => {
-  if (!appTitleBar) return;
+  if (!windowTitleBar) return;
   const isMaximized = state === 'maximized';
-  appTitleBar.classList.toggle('gm-maximized', isMaximized);
-  const button = appTitleBar.querySelector('.gm-maximize-button');
+  windowTitleBar.classList.toggle('gm-maximized', isMaximized);
+  const button = windowTitleBar.querySelector('.gm-maximize-button');
   if (button) {
     button.replaceChildren(createWindowIcon(isMaximized ? 'restore' : 'maximize'));
     button.title = isMaximized ? 'Restore' : 'Maximize';
@@ -225,7 +234,7 @@ function applyTrackInfo(info) {
 }
 
 function applyAlbumColor(image) {
-  if (!pluginEnabled('album-color-theme')) return;
+  if (!pluginEnabled('album-color-theme') && backgroundMode !== 'ambient') return;
   try {
     const canvas = document.createElement('canvas');
     canvas.width = 12;
@@ -813,14 +822,56 @@ function toast(text) {
   setTimeout(() => t.remove(), 2500);
 }
 
+function syncYouTubeProfileButton(isFullscreen) {
+  const nativeProfile = document.querySelector('ytmusic-nav-bar ytmusic-settings-button');
+  if (!youtubeProfileButton) {
+    youtubeProfileButton = el('button', {
+      className: 'gm-youtube-profile',
+      type: 'button',
+      title: 'YouTube account',
+      'aria-label': 'YouTube account menu',
+    });
+    youtubeProfileButton.append(el('img', { alt: '' }));
+    youtubeProfileButton.addEventListener('click', () => {
+      const nativeButton = document.querySelector('ytmusic-nav-bar ytmusic-settings-button button');
+      if (!nativeButton) {
+        console.error('YouTube profile menu is unavailable: the native account button was not found.');
+        toast('YouTube profile is currently unavailable');
+        return;
+      }
+      nativeButton.click();
+    });
+    document.documentElement.append(youtubeProfileButton);
+  }
+
+  const roots = nativeProfile ? [nativeProfile, nativeProfile.shadowRoot].filter(Boolean) : [];
+  let avatar = null;
+  while (roots.length && !avatar) {
+    const root = roots.shift();
+    avatar = root.querySelector('yt-img-shadow img, img');
+    if (!avatar) {
+      for (const node of root.querySelectorAll('*')) {
+        if (node.shadowRoot) roots.push(node.shadowRoot);
+      }
+    }
+  }
+  const image = youtubeProfileButton.querySelector('img');
+  const avatarUrl = avatar?.currentSrc || avatar?.src || '';
+  if (avatarUrl && image.src !== avatarUrl) image.src = avatarUrl;
+  if (!avatarUrl) image.removeAttribute('src');
+  youtubeProfileButton.style.display = nativeProfile && avatarUrl && !isFullscreen ? 'flex' : 'none';
+}
+
 function moveUiToFullscreen() {
   const target = document.fullscreenElement
     || document.querySelector('#movie_player.ytp-fullscreen, .html5-video-player.ytp-fullscreen')
     || document.body;
   const isFullscreen = nativeWindowFullscreen || target !== document.body;
+  syncYouTubeProfileButton(isFullscreen);
   document.documentElement.classList.toggle('gm-window-fullscreen', isFullscreen);
-  document.documentElement.style.setProperty('--gm-app-top', isFullscreen ? '0px' : '32px');
+  document.documentElement.style.setProperty('--gm-app-top', isFullscreen ? '0px' : '80px');
   if (appTitleBar) appTitleBar.style.display = isFullscreen ? 'none' : 'flex';
+  if (windowTitleBar) windowTitleBar.style.display = isFullscreen ? 'none' : 'flex';
   if (target === fullscreenMount && fullscreenUiNodes.every((node) => node.parentElement === target)) return;
   fullscreenMount = target;
   for (const node of fullscreenUiNodes) target.appendChild(node);
@@ -828,6 +879,7 @@ function moveUiToFullscreen() {
 
 function buildAppTitleBar() {
   appTitleBar = el('div', { className: 'gm-titlebar', 'aria-label': 'Gmajna Music' });
+  windowTitleBar = el('div', { className: 'gm-window-titlebar gm-titlebar', 'aria-label': 'Window controls' });
   const menuGroup = el('div', { className: 'gm-titlebar-menus' });
   const updateOpenMenuState = () => {
     appTitleBar.classList.toggle('gm-has-open-menu', Boolean(menuGroup.querySelector('.gm-menu-open')));
@@ -911,11 +963,28 @@ function buildAppTitleBar() {
     menuGroup.append(group);
   }
 
-  const brand = el('div', { className: 'gm-nav-brand', 'aria-label': 'Gmajna Music' });
-  brand.append(
-    makeBrandMark('gm-mark gm-nav-brand-mark'),
-    el('span', { textContent: 'Gmajna Music' })
+  const searchForm = el('form', {
+    className: 'gm-titlebar-search',
+    role: 'search',
+  });
+  const searchInput = el('input', {
+    className: 'gm-titlebar-search-input',
+    type: 'search',
+    placeholder: 'Iščite skladbe, albume, izvajalce, podcaste',
+    'aria-label': 'Išči v YouTube Music',
+  });
+  searchForm.append(
+    el('span', { className: 'gm-titlebar-search-icon', textContent: '⌕', 'aria-hidden': 'true' }),
+    searchInput,
   );
+  searchForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const query = searchInput.value.trim();
+    if (query) location.assign(`/search?q=${encodeURIComponent(query)}`);
+  });
+
+  const brand = el('div', { className: 'gm-nav-brand', 'aria-label': 'Gmajna Music' });
+  brand.textContent = 'Gmajna Music';
   const windowControls = el('div', { className: 'gm-window-controls' });
   const controls = [
     { label: 'Minimize', icon: 'minimize', action: 'minimize', className: 'gm-window-button' },
@@ -932,7 +1001,8 @@ function buildAppTitleBar() {
     button.addEventListener('click', () => ipcRenderer.send('gm-window-control', control.action));
     windowControls.append(button);
   }
-  appTitleBar.append(menuGroup, windowControls);
+  windowTitleBar.append(windowControls);
+  appTitleBar.append(menuGroup, searchForm);
   appTitleBar.addEventListener('click', (event) => {
     if (event.target.closest('.gm-titlebar-menu')) return;
     for (const openGroup of menuGroup.querySelectorAll('.gm-titlebar-menu')) {
@@ -949,7 +1019,7 @@ function buildAppTitleBar() {
     }
     updateOpenMenuState();
   });
-  document.body.append(appTitleBar, brand);
+  document.documentElement.append(windowTitleBar, appTitleBar, brand);
 }
 
 function createWindowIcon(name) {
@@ -1281,6 +1351,86 @@ function buildUI() {
     applyTheme();
   });
 
+  const backgroundLabel = el('label', {
+    className: 'gm-field-label gm-background-label',
+    textContent: 'Ozadje',
+  });
+  const backgroundSelect = el('select', {
+    className: 'gm-field gm-background-select',
+    'aria-label': 'Ozadje aplikacije',
+  });
+  for (const option of [
+    { value: 'ambient', textContent: 'Ambient po barvi albuma' },
+    { value: 'image', textContent: 'Lastna slika' },
+    { value: 'default', textContent: 'Privzeto' },
+  ]) {
+    backgroundSelect.append(el('option', option));
+  }
+  backgroundSelect.value = backgroundMode;
+  let ambientPluginToggle = null;
+  backgroundSelect.addEventListener('change', () => {
+    if (backgroundSelect.value === 'image' && !backgroundImage) {
+      backgroundSelect.value = backgroundMode;
+      toast('Najprej naloži sliko ozadja.');
+      return;
+    }
+    backgroundMode = backgroundSelect.value;
+    store.set('backgroundMode', backgroundMode);
+    if (backgroundMode === 'ambient') {
+      store.set('plugin_ambient-background', '1');
+      if (ambientPluginToggle) ambientPluginToggle.checked = true;
+    }
+    applyPluginSettings();
+  });
+  const backgroundUploadLabel = el('label', {
+    className: 'gm-field-label gm-background-upload-label',
+    textContent: 'Slika ozadja',
+  });
+  const backgroundUpload = el('input', {
+    className: 'gm-field gm-background-upload',
+    type: 'file',
+    accept: 'image/*',
+    'aria-label': 'Naloži sliko ozadja',
+  });
+  backgroundUpload.addEventListener('change', async () => {
+    const [file] = backgroundUpload.files || [];
+    if (!file) return;
+    if (!file.type.startsWith('image/') || file.size > 20 * 1024 * 1024) {
+      toast(file.size > 20 * 1024 * 1024
+        ? 'Slika je prevelika. Izberi sliko, manjšo od 20 MB.'
+        : 'Izberi slikovno datoteko.');
+      backgroundUpload.value = '';
+      return;
+    }
+    try {
+      const image = await createImageBitmap(file);
+      const scale = Math.min(1, 1920 / image.width, 1080 / image.height);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext('2d');
+      if (!context) {
+        image.close();
+        throw new Error('Canvas 2D ni na voljo.');
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      image.close();
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
+      localStorage.setItem('gm_backgroundImage', dataUrl);
+      backgroundImage = dataUrl;
+      backgroundMode = 'image';
+      store.set('backgroundMode', backgroundMode);
+      backgroundSelect.value = backgroundMode;
+      applyPluginSettings();
+      toast('Slika ozadja je shranjena.');
+    } catch (error) {
+      console.error('Slike ozadja ni mogoče shraniti:', error);
+      toast('Slike ozadja ni mogoče shraniti. Poskusi z manjšo sliko.');
+    } finally {
+      backgroundUpload.value = '';
+    }
+  });
+
   const pluginListHeading = el('div', { className: 'gm-plugin-list-heading', textContent: 'Razširitve' });
   const pluginList = el('div', { className: 'gm-plugin-list' });
   for (const plugin of PLUGINS) {
@@ -1296,6 +1446,7 @@ function buildUI() {
       checked: pluginEnabled(plugin.id),
       'aria-label': `Vključi vtičnik ${plugin.name}`,
     });
+    if (plugin.id === 'ambient-background') ambientPluginToggle = toggle;
     toggle.addEventListener('change', () => {
       store.set(`plugin_${plugin.id}`, toggle.checked ? '1' : '0');
       if (plugin.id === 'album-color-theme' && toggle.checked
@@ -1319,6 +1470,10 @@ function buildUI() {
     pluginHeader,
     themeLabel,
     themeSelect,
+    backgroundLabel,
+    backgroundSelect,
+    backgroundUploadLabel,
+    backgroundUpload,
     pluginListHeading,
     pluginList,
     jamPluginRow
@@ -1707,11 +1862,21 @@ function installProgressStyles() {
     }
     ytmusic-guide-renderer,
     ytmusic-guide-entry-renderer { background: var(--gm-panel) !important; }
-    :host(ytmusic-nav-bar),
     :host(ytmusic-guide-renderer),
     :host(ytmusic-guide-entry-renderer),
     :host(ytmusic-player-bar) {
       background-color: var(--gm-panel) !important;
+    }
+    :host(ytmusic-nav-bar) {
+      z-index: 100012 !important;
+      overflow: visible !important;
+      background: transparent !important;
+    }
+    :host(ytmusic-nav-bar) #nav-bar,
+    :host(ytmusic-nav-bar) #container,
+    :host(ytmusic-nav-bar) #header {
+      overflow: visible !important;
+      background: transparent !important;
     }
     :host(ytmusic-nav-bar) #nav-bar,
     :host(ytmusic-nav-bar) #container,
@@ -1731,16 +1896,6 @@ function installProgressStyles() {
     :host(ytmusic-guide-renderer) #guide-content,
     :host(ytmusic-guide-entry-renderer) #endpoint {
       background-color: var(--gm-panel) !important;
-    }
-    :host(ytmusic-app-layout) #content,
-    :host(ytmusic-app-layout) ytmusic-page-manager,
-    :host(ytmusic-page-manager) #content,
-    :host(ytmusic-browse-response) #contents,
-    :host(ytmusic-search-page) #contents,
-    :host(ytmusic-playlist-page) #contents,
-    :host(ytmusic-artist-page) #contents {
-      overflow-y: auto !important;
-      overscroll-behavior-y: contain;
     }
     ytmusic-logo { display: none !important; }
     :host-context(body.gm-hide-promotions) ytmusic-mealbar-promo-renderer,
@@ -1768,7 +1923,7 @@ function installProgressStyles() {
 }
 
 function applyTheme() {
-  logoDataUrl = loadThemeLogo(themeId);
+  logoDataUrl = loadThemeLogo();
   for (const image of document.querySelectorAll('.gm-mark img')) {
     if (logoDataUrl) image.src = logoDataUrl;
   }
@@ -1777,7 +1932,7 @@ function applyTheme() {
   rootStyle.setProperty('--gm-bg', THEME.bg);
   rootStyle.setProperty('--gm-panel', THEME.panel);
   rootStyle.setProperty('--gm-app-top',
-    document.documentElement.classList.contains('gm-window-fullscreen') ? '0px' : '32px');
+    document.documentElement.classList.contains('gm-window-fullscreen') ? '0px' : '80px');
   if (themeStyle) return;
   const style = el('style');
   themeStyle = style;
@@ -1797,8 +1952,8 @@ function applyTheme() {
       display: block !important;
       width: 100% !important;
       height: auto !important;
-      min-height: calc(100vh - var(--gm-app-top, 32px)) !important;
-      margin-top: var(--gm-app-top, 32px) !important;
+      min-height: calc(100vh - var(--gm-app-top, 80px)) !important;
+      margin-top: var(--gm-app-top, 80px) !important;
       overflow: visible !important;
       background: var(--gm-bg) !important;
       transition: background 900ms ease;
@@ -1808,21 +1963,27 @@ function applyTheme() {
       margin-top: 0 !important;
     }
     body.gm-ambient-background ytmusic-app {
-      background:
-        radial-gradient(ellipse at 82% 12%,
-          color-mix(in srgb, var(--gm-theme-accent, var(--gm-accent)) 34%, transparent), transparent 48%),
-        radial-gradient(ellipse at 10% 88%,
-          color-mix(in srgb,
-            color-mix(in srgb, var(--gm-theme-accent, var(--gm-accent)) 56%, white) 26%, transparent), transparent 52%),
-        var(--gm-bg) !important;
-      transition: background 900ms ease;
+      background: color-mix(in srgb, var(--gm-album-color, var(--gm-accent)) 36%, var(--gm-bg)) !important;
+      transition: background-color 900ms ease;
+    }
+    body.gm-custom-background ytmusic-app {
+      background-color: var(--gm-bg) !important;
+      background-image:
+        linear-gradient(rgba(13,13,18,.16), rgba(13,13,18,.24)),
+        var(--gm-custom-background-image) !important;
+      background-position: center !important;
+      background-size: cover !important;
+      background-repeat: no-repeat !important;
+      background-attachment: fixed !important;
     }
     html.gm-album-theme-enabled { --gm-theme-accent: var(--gm-album-color, var(--gm-accent)); }
-    ytmusic-app-layout { background: transparent !important; }
+    ytmusic-app-layout,
+    ytmusic-nav-bar,
+    ytmusic-nav-bar #nav-bar,
+    ytmusic-nav-bar #container,
+    ytmusic-nav-bar #header { background: transparent !important; }
     ytmusic-guide-renderer,
-    ytmusic-guide-entry-renderer {
-      background: var(--gm-panel) !important;
-    }
+    ytmusic-guide-entry-renderer { background: var(--gm-panel) !important; }
     ytmusic-player-bar {
       background: var(--gm-panel) !important;
       transition: background 900ms ease;
@@ -1832,36 +1993,38 @@ function applyTheme() {
     body.gm-hide-promotions ytmusic-mealbar-promo-renderer,
     body.gm-hide-promotions ytmusic-statement-banner-renderer { display: none !important; }
     .gm-titlebar {
-      position: fixed; inset: 0 0 auto; z-index: 100010;
-      box-sizing: border-box; height: 32px; display: flex; align-items: center;
+      position: fixed; inset: 0 0 auto; z-index: 2147483647;
+      box-sizing: border-box; height: 48px; display: flex; align-items: center;
       padding-left: 4px; background: var(--gm-panel); color: #f3f3f3;
       font: 12px Roboto, Arial, sans-serif;
       -webkit-app-region: drag; user-select: none;
     }
-    .gm-titlebar::after {
-      position: absolute; top: 100%; left: 0; width: 240px; height: 40px;
-      background: var(--gm-panel); content: ''; pointer-events: none;
+    .gm-window-titlebar { top: 0; justify-content: flex-end; }
+    .gm-titlebar:not(.gm-window-titlebar) { top: 48px; right: 46px; height: 32px; }
+    .gm-youtube-profile {
+      position: fixed !important; top: 51px !important; right: 10px !important;
+      display: flex !important; width: 26px !important; height: 26px !important;
+      align-items: center; justify-content: center; padding: 0;
+      border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+      z-index: 2147483647 !important; pointer-events: auto !important;
+      -webkit-app-region: no-drag;
+    }
+    html.gm-window-fullscreen .gm-youtube-profile { display: none !important; }
+    .gm-youtube-profile img {
+      display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover;
     }
     .gm-nav-brand {
-      position: fixed; top: 28px; left: 4px; z-index: 100001;
-      height: 42px; display: flex; align-items: center; gap: 7px;
-      color: var(--gm-accent);
-      font: 600 14px Roboto, Arial, sans-serif;
-      text-shadow:
-        0 0 4px color-mix(in srgb, var(--gm-accent) 80%, transparent),
-        0 0 12px color-mix(in srgb, var(--gm-accent) 55%, transparent);
-      white-space: nowrap; pointer-events: none;
-    }
-    .gm-titlebar.gm-has-open-menu + .gm-nav-brand { visibility: hidden; }
-    html.gm-plugin-settings-open .gm-nav-brand { visibility: hidden; }
-    .gm-mark.gm-nav-brand-mark {
-      width: 32px; height: 32px; flex-basis: 32px;
-      border-color: color-mix(in srgb, var(--gm-accent) 45%, transparent);
-      box-shadow: 0 1px 9px color-mix(in srgb, var(--gm-accent) 22%, transparent);
+      --gm-brand-offset-y: 10px;
+      position: fixed; inset: 0 0 auto; z-index: 2147483647;
+      height: 48px; display: flex; align-items: center; justify-content: center;
+      transform: translateY(var(--gm-brand-offset-y));
+      color: var(--gm-accent); font: 600 39px Roboto, Arial, sans-serif;
+      text-shadow: 0 0 5px color-mix(in srgb, var(--gm-accent) 45%, transparent);
+      text-decoration: none; white-space: nowrap; pointer-events: none;
     }
     html.gm-window-fullscreen .gm-nav-brand { display: none; }
     .gm-titlebar-menus, .gm-window-controls, .gm-titlebar-menu-trigger,
-    .gm-titlebar-menu-popover, .gm-window-button {
+    .gm-titlebar-menu-popover, .gm-window-button, .gm-titlebar-search {
       -webkit-app-region: no-drag;
     }
     .gm-titlebar-menus { height: 100%; display: flex; align-items: stretch; }
@@ -1889,9 +2052,27 @@ function applyTheme() {
       outline: 0; background: color-mix(in srgb, var(--gm-accent) 28%, #333);
     }
     .gm-titlebar-menu-separator { height: 1px; margin: 4px 5px; background: #444; }
+    .gm-titlebar-search {
+      position: absolute; top: 50%; left: clamp(180px, 22vw, 340px);
+      display: flex; width: min(460px, calc(100vw - 520px)); height: 24px;
+      align-items: center; gap: 8px; box-sizing: border-box; padding: 0 10px;
+      transform: translateY(-50%); border: 1px solid rgba(255,255,255,.12);
+      border-radius: 5px; background: color-mix(in srgb, var(--gm-panel) 88%, white);
+      color: #d9d7df;
+    }
+    .gm-titlebar-search-icon { flex: 0 0 auto; font: 20px/1 Arial, sans-serif; }
+    .gm-titlebar-search-input {
+      width: 100%; min-width: 0; padding: 0; border: 0; outline: 0;
+      background: transparent; color: #f3f3f3; font: 11px Roboto, Arial, sans-serif;
+    }
+    .gm-titlebar-search-input::placeholder { color: #aaa6b0; opacity: 1; }
+    .gm-titlebar-search:focus-within {
+      border-color: color-mix(in srgb, var(--gm-accent) 75%, white);
+      background: color-mix(in srgb, var(--gm-panel) 75%, white);
+    }
     .gm-window-controls { display: flex; height: 100%; margin-left: auto; }
     .gm-window-button {
-      display: flex; width: 46px; height: 32px; flex: 0 0 46px; align-items: center; justify-content: center;
+      display: flex; width: 46px; height: 48px; flex: 0 0 46px; align-items: center; justify-content: center;
       padding: 0; border: 0; border-radius: 0; background: transparent;
       color: #eee; font: 16px Arial,sans-serif;
       cursor: pointer;
@@ -1955,7 +2136,7 @@ function applyTheme() {
       backdrop-filter: blur(22px); animation: gm-panel-in .2s ease-out;
     }
     .gm-plugin-panel {
-      position: fixed; top: 60px; left: 12px; right: auto; z-index: 100003;
+      position: fixed; top: 60px; left: 12px; right: auto; z-index: 100020;
       box-sizing: border-box; width: min(360px, calc(100vw - 32px));
       max-height: min(78vh, 700px); overflow-y: auto; padding: 18px;
       display: none; border: 1px solid color-mix(in srgb, var(--gm-accent) 36%, #30303a);
@@ -1971,6 +2152,17 @@ function applyTheme() {
     .gm-plugin-heading { font-size: 16px; font-weight: 750; }
     .gm-plugin-subtitle { margin-top: 4px; color: #aaaab5; font-size: 11px; }
     .gm-plugin-header .gm-close-button { margin-left: auto; }
+    .gm-background-label { margin-top: 16px; }
+    .gm-background-upload-label { margin-top: 10px; }
+    .gm-background-upload {
+      box-sizing: border-box; margin: 6px 0 0; padding: 7px;
+      font-size: 11px;
+    }
+    .gm-background-upload::file-selector-button {
+      margin-right: 9px; padding: 6px 9px; border: 0; border-radius: 6px;
+      background: color-mix(in srgb, var(--gm-accent) 24%, var(--gm-panel));
+      color: #fff; font: 600 11px Roboto, Arial, sans-serif; cursor: pointer;
+    }
     .gm-plugin-list-heading {
       margin: 17px 0 5px; color: #a6a6b0; font-size: 10px;
       font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
